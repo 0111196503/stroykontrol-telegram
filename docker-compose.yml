@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>СтройКонтроль</title><style>
+:root{font-family:Inter,Arial,sans-serif;color:#e8edf5;background:#101722}*{box-sizing:border-box}body{margin:0}
+header{padding:20px 28px;background:#182333;border-bottom:1px solid #2b3a4f;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:0}main{max-width:1500px;margin:auto;padding:24px}.login{max-width:380px;margin:10vh auto;background:#1a2738;padding:28px;border-radius:14px}
+input,select,button{padding:11px 12px;border-radius:8px;border:1px solid #3b4b61;background:#111c2a;color:#eef3fa}
+button{background:#2563eb;border:0;cursor:pointer;font-weight:600}.filters{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat,.item{background:#1a2738;border:1px solid #2b3a4f;border-radius:12px;padding:16px}
+.stat b{display:block;font-size:28px;margin-top:8px}.feed{display:grid;gap:10px;margin-top:18px}.item{display:grid;grid-template-columns:110px 1fr auto;gap:14px;align-items:start}
+.muted{color:#98a8bd;font-size:13px}.status{padding:5px 9px;border-radius:20px;background:#334155;font-size:12px;white-space:nowrap}
+.status.Выполнено{background:#14532d}.status.В.работе{background:#1e40af}.status.Приостановлено{background:#7f1d1d}.status.Проверено{background:#581c87}
+.hidden{display:none}.photos img{width:90px;height:70px;object-fit:cover;border-radius:7px;margin:5px 5px 0 0}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.item{grid-template-columns:1fr}.filters>*{width:100%}}
+</style></head><body>
+<header><h1>🏗 СтройКонтроль</h1><span id="who" class="muted"></span></header>
+<main>
+<section id="login" class="login"><h2>Вход руководителя</h2><p class="muted">Введите учётные данные администратора.</p>
+<form id="loginForm"><p><input id="username" placeholder="Логин" required style="width:100%"></p><p><input id="password" type="password" placeholder="Пароль" required style="width:100%"></p><button style="width:100%">Войти</button></form><p id="loginError" class="muted"></p></section>
+<section id="dashboard" class="hidden">
+<div class="stats"><div class="stat">Работ сегодня<b id="today">0</b></div><div class="stat">Сейчас в работе<b id="active">0</b></div><div class="stat">Прорабов<b id="foremen">0</b></div><div class="stat">Давно не заходили<b id="stale">0</b></div></div>
+<div class="filters">
+<select id="project"><option value="">Все объекты</option></select>
+<select id="status"><option value="">Все статусы</option><option>Запланировано</option><option>В работе</option><option>Выполнено</option><option>Приостановлено</option><option>Проверено руководителем</option></select>
+<input id="from" type="date"><input id="to" type="date"><input id="search" placeholder="Поиск: объект, модуль, прораб, работа">
+<button id="refresh">Обновить</button>
+</div>
+<h2>Контроль стройки <span class="muted">· онлайн</span></h2><div id="feed" class="feed"></div>
+</section></main>
+<script>
+let token=null, ws=null;
+const $=id=>document.getElementById(id);
+async function api(path,opts={}){let r=await fetch(path,{...opts,headers:{...(opts.headers||{}),Authorization:'Bearer '+token}});if(!r.ok)throw new Error((await r.json()).detail||r.statusText);return r.json()}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function statusClass(s){return s==='Выполнено'?'Выполнено':s==='В работе'?'В.работе':s==='Приостановлено'?'Приостановлено':s==='Проверено руководителем'?'Проверено':''}
+function render(w,prepend=false){
+ const d=new Date(w.created_at), time=d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}), date=d.toLocaleDateString('ru-RU');
+ const div=document.createElement('article');div.className='item';div.dataset.id=w.id;
+ div.innerHTML=`<div><b>${time}</b><div class="muted">${date}</div></div><div><b>${esc(w.project)}</b><div class="muted">Модуль ${esc(w.module||'—')} · ${esc(w.foreman)}</div><p>${esc(w.work_name)}${w.quantity!==null?' — '+esc(w.quantity)+' '+esc(w.unit||''):''}</p>${w.comment?`<div class="muted">${esc(w.comment)}</div>`:''}<div class="photos">${(w.photos||[]).map(p=>`<a href="${p.url}" target="_blank"><img src="${p.url}" alt="Фото"></a>`).join('')}</div><button onclick="history(${w.id})">История</button></div><span class="status ${statusClass(w.status)}">${esc(w.status)}</span>`;
+ const feed=$('feed'); if(prepend)feed.prepend(div);else feed.append(div);
+}
+async function load(){
+ let params=new URLSearchParams();if($('project').value)params.set('project_id',$('project').value);if($('status').value)params.set('status',$('status').value);if($('from').value)params.set('date_from',$('from').value);if($('to').value)params.set('date_to',$('to').value);if($('search').value)params.set('q',$('search').value);
+ const [works,summary,projects]=await Promise.all([api('/api/works?'+params),api('/api/summary'),api('/api/projects')]);
+ $('today').textContent=summary.works_today;$('active').textContent=summary.in_progress;$('foremen').textContent=summary.foremen;$('stale').textContent=summary.stale_foremen.length;
+ const selected=$('project').value;$('project').innerHTML='<option value="">Все объекты</option>'+projects.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');$('project').value=selected;
+ $('feed').innerHTML='';works.forEach(w=>render(w));
+}
+async function history(id){let rows=await api('/api/works/'+id+'/history');alert(rows.map(x=>new Date(x.created_at).toLocaleString('ru-RU')+' · '+x.action+'\nБыло: '+JSON.stringify(x.before)+'\nСтало: '+JSON.stringify(x.after)).join('\n\n')||'История пуста')}
+$('loginForm').onsubmit=async e=>{e.preventDefault();try{let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})});if(!r.ok)throw Error('Проверьте логин и пароль');let x=await r.json();token=x.access_token;if(x.role!=='manager')throw Error('Веб-панель доступна руководителю');$('login').classList.add('hidden');$('dashboard').classList.remove('hidden');$('who').textContent=x.name;await load();connect()}catch(err){$('loginError').textContent=err.message}};
+function connect(){let proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);ws.onmessage=e=>{let ev=JSON.parse(e.data);if(ev.type==='work.created'){render(ev.work,true);loadSummary()}else if(ev.type==='work.updated'){load()}};ws.onclose=()=>setTimeout(connect,2500)}
+async function loadSummary(){try{let s=await api('/api/summary');$('today').textContent=s.works_today;$('active').textContent=s.in_progress;$('stale').textContent=s.stale_foremen.length}catch{}}
+$('refresh').onclick=load;['project','status','from','to'].forEach(id=>$(id).onchange=load);$('search').onkeydown=e=>{if(e.key==='Enter')load()};
+</script></body></html>
